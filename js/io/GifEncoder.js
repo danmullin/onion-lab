@@ -12,39 +12,79 @@
      */
     static encode(frames, opts) {
       if (!frames || !frames.length) throw new Error('No frames')
-      const w = frames[0].width | 0
-      const h = frames[0].height | 0
-      const loop = opts && opts.loop != null ? opts.loop : 0
       const transparent = !opts || opts.transparent !== false
       const alphaThreshold =
         opts && opts.alphaThreshold != null ? opts.alphaThreshold | 0 : 16
-
-      const parts = []
-      const pushBytes = (arr) => {
-        parts.push(arr instanceof Uint8Array ? arr : new Uint8Array(arr))
-      }
-      // Header
-      pushBytes([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]) // GIF89a
-
       const { palette, indexFrames } = GifEncoder._quantize(
         frames,
         transparent,
         alphaThreshold
       )
+      return GifEncoder._pack(frames, opts || {}, palette, indexFrames)
+    }
+
+    /**
+     * Same as encode, but yields between heavy steps so the UI can paint.
+     * @param {{ width: number, height: number, data: Uint8ClampedArray|Uint8Array, delayCs?: number }[]} frames
+     * @param {{ loop?: number, transparent?: boolean, alphaThreshold?: number }} [opts]
+     * @returns {Promise<Uint8Array>}
+     */
+    static async encodeAsync(frames, opts) {
+      if (!frames || !frames.length) throw new Error('No frames')
+      const transparent = !opts || opts.transparent !== false
+      const alphaThreshold =
+        opts && opts.alphaThreshold != null ? opts.alphaThreshold | 0 : 16
+      await GifEncoder._yield()
+      const { palette, indexFrames } = await GifEncoder._quantizeAsync(
+        frames,
+        transparent,
+        alphaThreshold
+      )
+      await GifEncoder._yield()
+      return GifEncoder._packAsync(frames, opts || {}, palette, indexFrames)
+    }
+
+    static _yield() {
+      return new Promise((resolve) => {
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(() => setTimeout(resolve, 0))
+        } else {
+          setTimeout(resolve, 0)
+        }
+      })
+    }
+
+    /**
+     * @param {{ width: number, height: number, data: Uint8ClampedArray|Uint8Array, delayCs?: number }[]} frames
+     * @param {{ loop?: number, transparent?: boolean, alphaThreshold?: number }} opts
+     * @param {number[][]} palette
+     * @param {Uint8Array[]} indexFrames
+     * @returns {Uint8Array}
+     */
+    static _pack(frames, opts, palette, indexFrames) {
+      const w = frames[0].width | 0
+      const h = frames[0].height | 0
+      const loop = opts.loop != null ? opts.loop : 0
+      const transparent = opts.transparent !== false
+
+      const parts = []
+      const pushBytes = (arr) => {
+        parts.push(arr instanceof Uint8Array ? arr : new Uint8Array(arr))
+      }
+      pushBytes([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]) // GIF89a
 
       const gctSize = palette.length
       const gctPow = Math.max(0, Math.ceil(Math.log2(Math.max(2, gctSize))) - 1)
       const gctCount = 1 << (gctPow + 1)
 
-      // Logical screen
       const ls = new Uint8Array(7)
       ls[0] = w & 255
       ls[1] = (w >> 8) & 255
       ls[2] = h & 255
       ls[3] = (h >> 8) & 255
-      ls[4] = 0x80 | (gctPow & 7) // GCT flag + size
-      ls[5] = 0 // bg index (transparent slot when enabled)
-      ls[6] = 0 // pixel aspect
+      ls[4] = 0x80 | (gctPow & 7)
+      ls[5] = 0
+      ls[6] = 0
       pushBytes(ls)
 
       const gct = new Uint8Array(gctCount * 3)
@@ -55,52 +95,20 @@
       }
       pushBytes(gct)
 
-      // Netscape loop extension
       pushBytes([0x21, 0xff, 0x0b])
-      pushBytes([0x4e, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2e, 0x30]) // NETSCAPE2.0
+      pushBytes([0x4e, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2e, 0x30])
       pushBytes([0x03, 0x01, loop & 255, (loop >> 8) & 255, 0x00])
 
+      const minCode = Math.max(2, gctPow + 1)
       for (let fi = 0; fi < indexFrames.length; fi++) {
-        const delayCs = Math.max(2, frames[fi].delayCs != null ? frames[fi].delayCs | 0 : 10)
-        // Graphic control: disposal 2 (restore bg) + optional transparent color index 0
-        const packed = transparent ? 0x09 : 0x08
-        pushBytes([
-          0x21,
-          0xf9,
-          0x04,
-          packed,
-          delayCs & 255,
-          (delayCs >> 8) & 255,
-          transparent ? 0x00 : 0x00,
-          0x00,
-        ])
-        // Image descriptor
-        const id = new Uint8Array(10)
-        id[0] = 0x2c
-        id[1] = 0
-        id[2] = 0
-        id[3] = 0
-        id[4] = 0
-        id[5] = w & 255
-        id[6] = (w >> 8) & 255
-        id[7] = h & 255
-        id[8] = (h >> 8) & 255
-        id[9] = 0
-        pushBytes(id)
-        const minCode = Math.max(2, gctPow + 1)
-        pushBytes([minCode])
-        const lzw = GifEncoder._lzw(indexFrames[fi], minCode)
-        // Sub-blocks
-        let off = 0
-        while (off < lzw.length) {
-          const n = Math.min(255, lzw.length - off)
-          pushBytes([n])
-          pushBytes(lzw.subarray(off, off + n))
-          off += n
-        }
-        pushBytes([0])
+        GifEncoder._pushFrame(parts, pushBytes, frames[fi], indexFrames[fi], {
+          w,
+          h,
+          transparent,
+          minCode,
+        })
       }
-      pushBytes([0x3b]) // trailer
+      pushBytes([0x3b])
 
       let total = 0
       for (const p of parts) total += p.length
@@ -111,6 +119,104 @@
         o += p.length
       }
       return out
+    }
+
+    static async _packAsync(frames, opts, palette, indexFrames) {
+      const w = frames[0].width | 0
+      const h = frames[0].height | 0
+      const loop = opts.loop != null ? opts.loop : 0
+      const transparent = opts.transparent !== false
+
+      const parts = []
+      const pushBytes = (arr) => {
+        parts.push(arr instanceof Uint8Array ? arr : new Uint8Array(arr))
+      }
+      pushBytes([0x47, 0x49, 0x46, 0x38, 0x39, 0x61])
+
+      const gctSize = palette.length
+      const gctPow = Math.max(0, Math.ceil(Math.log2(Math.max(2, gctSize))) - 1)
+      const gctCount = 1 << (gctPow + 1)
+
+      const ls = new Uint8Array(7)
+      ls[0] = w & 255
+      ls[1] = (w >> 8) & 255
+      ls[2] = h & 255
+      ls[3] = (h >> 8) & 255
+      ls[4] = 0x80 | (gctPow & 7)
+      ls[5] = 0
+      ls[6] = 0
+      pushBytes(ls)
+
+      const gct = new Uint8Array(gctCount * 3)
+      for (let i = 0; i < palette.length; i++) {
+        gct[i * 3] = palette[i][0]
+        gct[i * 3 + 1] = palette[i][1]
+        gct[i * 3 + 2] = palette[i][2]
+      }
+      pushBytes(gct)
+
+      pushBytes([0x21, 0xff, 0x0b])
+      pushBytes([0x4e, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2e, 0x30])
+      pushBytes([0x03, 0x01, loop & 255, (loop >> 8) & 255, 0x00])
+
+      const minCode = Math.max(2, gctPow + 1)
+      for (let fi = 0; fi < indexFrames.length; fi++) {
+        if (fi > 0) await GifEncoder._yield()
+        GifEncoder._pushFrame(parts, pushBytes, frames[fi], indexFrames[fi], {
+          w,
+          h,
+          transparent,
+          minCode,
+        })
+      }
+      pushBytes([0x3b])
+
+      let total = 0
+      for (const p of parts) total += p.length
+      const out = new Uint8Array(total)
+      let o = 0
+      for (const p of parts) {
+        out.set(p, o)
+        o += p.length
+      }
+      return out
+    }
+
+    static _pushFrame(parts, pushBytes, frame, indexFrame, meta) {
+      const delayCs = Math.max(2, frame.delayCs != null ? frame.delayCs | 0 : 10)
+      const packed = meta.transparent ? 0x09 : 0x08
+      pushBytes([
+        0x21,
+        0xf9,
+        0x04,
+        packed,
+        delayCs & 255,
+        (delayCs >> 8) & 255,
+        0x00,
+        0x00,
+      ])
+      const id = new Uint8Array(10)
+      id[0] = 0x2c
+      id[1] = 0
+      id[2] = 0
+      id[3] = 0
+      id[4] = 0
+      id[5] = meta.w & 255
+      id[6] = (meta.w >> 8) & 255
+      id[7] = meta.h & 255
+      id[8] = (meta.h >> 8) & 255
+      id[9] = 0
+      pushBytes(id)
+      pushBytes([meta.minCode])
+      const lzw = GifEncoder._lzw(indexFrame, meta.minCode)
+      let off = 0
+      while (off < lzw.length) {
+        const n = Math.min(255, lzw.length - off)
+        pushBytes([n])
+        pushBytes(lzw.subarray(off, off + n))
+        off += n
+      }
+      pushBytes([0])
     }
 
     /**
@@ -186,6 +292,86 @@
         }
         return idx
       })
+      return { palette, indexFrames }
+    }
+
+    /**
+     * Async quantize — yields between frames so the UI can update.
+     * @param {{ width:number, height:number, data:Uint8Array|Uint8ClampedArray }[]} frames
+     * @param {boolean} transparent
+     * @param {number} alphaThreshold
+     */
+    static async _quantizeAsync(frames, transparent, alphaThreshold) {
+      const key = (r, g, b) => (r << 16) | (g << 8) | b
+      /** @type {Map<number, number>} */
+      const counts = new Map()
+      for (let fi = 0; fi < frames.length; fi++) {
+        if (fi > 0) await GifEncoder._yield()
+        const d = frames[fi].data
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i + 3] < alphaThreshold) continue
+          const k = key(d[i], d[i + 1], d[i + 2])
+          counts.set(k, (counts.get(k) || 0) + 1)
+        }
+      }
+
+      const maxOpaque = transparent ? 255 : 256
+      /** @type {number[][]} */
+      let opaqueColors
+      if (counts.size <= maxOpaque) {
+        opaqueColors = [...counts.keys()].map((k) => [
+          (k >> 16) & 255,
+          (k >> 8) & 255,
+          k & 255,
+        ])
+      } else {
+        await GifEncoder._yield()
+        opaqueColors = GifEncoder._medianCut(counts, maxOpaque)
+      }
+
+      /** @type {number[][]} */
+      const palette = []
+      const indexOf = new Map()
+      if (transparent) palette.push([0, 0, 0])
+      for (const rgb of opaqueColors) {
+        indexOf.set(key(rgb[0], rgb[1], rgb[2]), palette.length)
+        palette.push(rgb)
+      }
+      if (palette.length < 2) palette.push([0, 0, 0])
+
+      const colorStart = transparent ? 1 : 0
+      const findNearest = (r, g, b) => {
+        const k = key(r, g, b)
+        if (indexOf.has(k)) return indexOf.get(k)
+        let best = colorStart
+        let bestD = 1e18
+        for (let i = colorStart; i < palette.length; i++) {
+          const p = palette[i]
+          const dr = p[0] - r
+          const dg = p[1] - g
+          const db = p[2] - b
+          const dd = dr * dr + dg * dg + db * db
+          if (dd < bestD) {
+            bestD = dd
+            best = i
+          }
+        }
+        return best
+      }
+
+      /** @type {Uint8Array[]} */
+      const indexFrames = []
+      for (let fi = 0; fi < frames.length; fi++) {
+        if (fi > 0) await GifEncoder._yield()
+        const d = frames[fi].data
+        const idx = new Uint8Array(frames[fi].width * frames[fi].height)
+        let p = 0
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i + 3] < alphaThreshold) idx[p++] = 0
+          else idx[p++] = findNearest(d[i], d[i + 1], d[i + 2])
+        }
+        indexFrames.push(idx)
+      }
       return { palette, indexFrames }
     }
 

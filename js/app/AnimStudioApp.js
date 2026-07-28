@@ -1440,20 +1440,43 @@
     }
 
     async downloadGif() {
+      if (this._gifBusy) return
+      const btn = $('btnDownloadGif')
+      const prevLabel = btn ? btn.textContent : 'Download GIF'
+      this._gifBusy = true
+      if (btn) {
+        btn.style.setProperty('--busy-min-w', `${Math.max(btn.offsetWidth, 88)}px`)
+        btn.classList.add('is-busy')
+        btn.disabled = true
+        btn.setAttribute('aria-busy', 'true')
+        btn.replaceChildren()
+        const spin = document.createElement('span')
+        spin.className = 'btn-spinner'
+        spin.setAttribute('aria-hidden', 'true')
+        btn.appendChild(spin)
+      }
+      const yieldUi = () =>
+        new Promise((resolve) => {
+          requestAnimationFrame(() => setTimeout(resolve, 0))
+        })
       try {
+        await yieldUi()
         this.stashUiIntoSlot()
         const s = this.slot()
         const frames = this.resolvedTimeline()
         if (!frames.length) throw new Error('Add frames to the timeline first')
         const src = await this.getKeyedSourceForSlot()
         if (!src) throw new Error('Load a sheet first')
+        await yieldUi()
         const sequence = s.playbackIndices()
         const { maxW, maxH } = Polygon.maxFrameBounds(frames)
         const pad = 4
         const W = Math.max(1, maxW + pad * 2)
         const H = Math.max(1, maxH + pad * 2)
         const gifFrames = []
-        for (const ti of sequence) {
+        for (let si = 0; si < sequence.length; si++) {
+          if (si > 0) await yieldUi()
+          const ti = sequence[si]
           const box = frames[ti]
           if (!box) continue
           const c = document.createElement('canvas')
@@ -1480,10 +1503,14 @@
             delayCs,
           })
         }
-        const bytes = SA.GifEncoder.encode(gifFrames, {
+        if (!gifFrames.length) throw new Error('No frames to encode')
+        this.setFooter('Encoding GIF…')
+        await yieldUi()
+        const bytes = await SA.GifEncoder.encodeAsync(gifFrames, {
           loop: s.loop ? 0 : 1,
           transparent: true,
         })
+        await yieldUi()
         const id = ($('charId').value.trim() || 'asset') + '-' + (s.id || 'anim')
         const blob = new Blob([bytes], { type: 'image/gif' })
         const a = document.createElement('a')
@@ -1495,6 +1522,15 @@
       } catch (err) {
         this.setFooter('GIF failed: ' + err.message)
         alert(err.message)
+      } finally {
+        this._gifBusy = false
+        if (btn) {
+          btn.classList.remove('is-busy')
+          btn.disabled = false
+          btn.removeAttribute('aria-busy')
+          btn.style.removeProperty('--busy-min-w')
+          btn.textContent = prevLabel
+        }
       }
     }
 
@@ -2156,7 +2192,9 @@
         this.setFooter(`Downloaded ${a.download}`)
       })
       on($('btnDownloadPack'), 'click', () => this.downloadPack())
-      on($('btnDownloadGif'), 'click', () => this.downloadGif())
+      on($('btnDownloadGif'), 'click', () => {
+        void this.downloadGif()
+      })
       on($('btnSaveSession'), 'click', () => this.saveSession())
       on($('btnLoadSession'), 'click', () => this.loadSession())
       on($('btnImport'), 'click', () => {

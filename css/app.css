@@ -8,6 +8,27 @@
   button:disabled { opacity: 0.4; cursor: default; border-color: var(--border); }
   button.primary { background: #2a3d5c; border-color: var(--accent); }
   button.danger { border-color: var(--danger); color: #ffc0cb; }
+  button.is-busy,
+  button.is-busy:disabled {
+    opacity: 1;
+    cursor: wait;
+    pointer-events: none;
+    min-width: var(--busy-min-w, 7.5rem);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .btn-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(232, 196, 138, 0.35);
+    border-top-color: var(--mist-gold, #e8c48a);
+    border-radius: 50%;
+    animation: btn-spin 0.65s linear infinite;
+  }
+  @keyframes btn-spin {
+    to { transform: rotate(360deg); }
+  }
   input[type="number"], input[type="text"] { padding: 4px 6px; width: 72px; }
   input[type="text"].wide { width: 160px; }
   label { color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
