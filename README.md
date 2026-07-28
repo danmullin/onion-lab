@@ -2,6 +2,8 @@
 
 A local-first **spritesheet animation studio**: detect frames on a master sheet, build per-anim timelines from a shared frame pool, preview playback (with onion skin), and export JSON atlases, PNG packs, GIFs, or Godot 4 packs.
 
+![Onion Lab](assets/brand/onion-lab-icon.png)
+
 ## Model
 
 - **Master sheet** — one PNG for the asset (stays loaded across anim tabs)
