@@ -1452,7 +1452,6 @@
         const pad = 4
         const W = Math.max(1, maxW + pad * 2)
         const H = Math.max(1, maxH + pad * 2)
-        const bg = [18, 20, 28]
         const gifFrames = []
         for (const ti of sequence) {
           const box = frames[ti]
@@ -1460,10 +1459,9 @@
           const c = document.createElement('canvas')
           c.width = W
           c.height = H
-          const ctx = c.getContext('2d')
+          const ctx = c.getContext('2d', { willReadFrequently: true })
           ctx.imageSmoothingEnabled = false
-          ctx.fillStyle = `rgb(${bg[0]},${bg[1]},${bg[2]})`
-          ctx.fillRect(0, 0, W, H)
+          ctx.clearRect(0, 0, W, H)
           const { dx, dy, dw, dh } = Polygon.layoutFrame(
             box,
             1,
@@ -1484,7 +1482,7 @@
         }
         const bytes = SA.GifEncoder.encode(gifFrames, {
           loop: s.loop ? 0 : 1,
-          bgRgb: bg,
+          transparent: true,
         })
         const id = ($('charId').value.trim() || 'asset') + '-' + (s.id || 'anim')
         const blob = new Blob([bytes], { type: 'image/gif' })

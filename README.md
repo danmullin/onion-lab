@@ -25,7 +25,7 @@ Export expands ids into full `{x,y,w,h,points?,duration_ms}` frames for games. A
 - **Godot 4** — `{ onion_lab, godot, name, texture, animations }` for `.onionlab.json`. **Download Godot pack** zips the sheet PNG + JSON + `addons/onion_lab_importer` (enable in Project Settings → Plugins, then Project → Tools → Onion Lab: Import JSON…).
 - **Download JSON** — profile-shaped export
 - **Download PNG pack** — zip of baked transparent PNGs + JSON with `file` per frame (non-Godot profiles)
-- **Download GIF** — active anim as animated GIF (honors durations + direction)
+- **Download GIF** — active anim as animated GIF with transparent background (honors durations + direction)
 
 ## Run
 

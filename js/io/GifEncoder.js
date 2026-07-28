@@ -2,11 +2,12 @@
   /**
    * Tiny GIF89a encoder (no dither). Enough for sprite-sized frames.
    * Input frames: { width, height, data: Uint8ClampedArray RGBA, delayCs: number centiseconds }
+   * Transparent GIFs: alpha < threshold → palette index 0 (GCE transparent color).
    */
   class GifEncoder {
     /**
      * @param {{ width: number, height: number, data: Uint8ClampedArray|Uint8Array, delayCs?: number }[]} frames
-     * @param {{ loop?: number, bgRgb?: [number,number,number] }} [opts]
+     * @param {{ loop?: number, transparent?: boolean, alphaThreshold?: number }} [opts]
      * @returns {Uint8Array}
      */
     static encode(frames, opts) {
@@ -14,7 +15,9 @@
       const w = frames[0].width | 0
       const h = frames[0].height | 0
       const loop = opts && opts.loop != null ? opts.loop : 0
-      const bg = (opts && opts.bgRgb) || [12, 14, 16]
+      const transparent = !opts || opts.transparent !== false
+      const alphaThreshold =
+        opts && opts.alphaThreshold != null ? opts.alphaThreshold | 0 : 16
 
       const parts = []
       const pushBytes = (arr) => {
@@ -23,8 +26,11 @@
       // Header
       pushBytes([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]) // GIF89a
 
-      // Global color table from all frames (max 256)
-      const { palette, indexFrames } = GifEncoder._quantize(frames, bg)
+      const { palette, indexFrames } = GifEncoder._quantize(
+        frames,
+        transparent,
+        alphaThreshold
+      )
 
       const gctSize = palette.length
       const gctPow = Math.max(0, Math.ceil(Math.log2(Math.max(2, gctSize))) - 1)
@@ -37,7 +43,7 @@
       ls[2] = h & 255
       ls[3] = (h >> 8) & 255
       ls[4] = 0x80 | (gctPow & 7) // GCT flag + size
-      ls[5] = 0 // bg index
+      ls[5] = 0 // bg index (transparent slot when enabled)
       ls[6] = 0 // pixel aspect
       pushBytes(ls)
 
@@ -56,8 +62,18 @@
 
       for (let fi = 0; fi < indexFrames.length; fi++) {
         const delayCs = Math.max(2, frames[fi].delayCs != null ? frames[fi].delayCs | 0 : 10)
-        // Graphic control
-        pushBytes([0x21, 0xf9, 0x04, 0x00, delayCs & 255, (delayCs >> 8) & 255, 0x00, 0x00])
+        // Graphic control: disposal 2 (restore bg) + optional transparent color index 0
+        const packed = transparent ? 0x09 : 0x08
+        pushBytes([
+          0x21,
+          0xf9,
+          0x04,
+          packed,
+          delayCs & 255,
+          (delayCs >> 8) & 255,
+          transparent ? 0x00 : 0x00,
+          0x00,
+        ])
         // Image descriptor
         const id = new Uint8Array(10)
         id[0] = 0x2c
@@ -98,53 +114,50 @@
     }
 
     /**
-     * Build a shared palette (index 0 = bg for near-transparent).
+     * Shared palette. When transparent, index 0 is reserved (never matched for opaque pixels).
      * @param {{ width:number, height:number, data:Uint8Array|Uint8ClampedArray }[]} frames
-     * @param {[number,number,number]} bg
+     * @param {boolean} transparent
+     * @param {number} alphaThreshold
      */
-    static _quantize(frames, bg) {
+    static _quantize(frames, transparent, alphaThreshold) {
       const counts = new Map()
       const key = (r, g, b) => (r << 16) | (g << 8) | b
-      counts.set(key(bg[0], bg[1], bg[2]), 1e9)
       for (const fr of frames) {
         const d = fr.data
         for (let i = 0; i < d.length; i += 4) {
-          const a = d[i + 3]
-          let r
-          let g
-          let b
-          if (a < 16) {
-            r = bg[0]
-            g = bg[1]
-            b = bg[2]
-          } else {
-            r = d[i]
-            g = d[i + 1]
-            b = d[i + 2]
-          }
-          // 5-bit crush to limit colors
-          r = (r >> 3) << 3
-          g = (g >> 3) << 3
-          b = (b >> 3) << 3
+          if (d[i + 3] < alphaThreshold) continue
+          let r = (d[i] >> 3) << 3
+          let g = (d[i + 1] >> 3) << 3
+          let b = (d[i + 2] >> 3) << 3
           const k = key(r, g, b)
           counts.set(k, (counts.get(k) || 0) + 1)
         }
       }
       const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1])
+      /** @type {number[][]} */
       const palette = []
       const indexOf = new Map()
-      for (let i = 0; i < Math.min(256, sorted.length); i++) {
+      if (transparent) {
+        // Slot 0 = transparent key color (not shown when GCE flag is set)
+        palette.push([0, 0, 0])
+      }
+      const maxOpaque = transparent ? 255 : 256
+      for (let i = 0; i < Math.min(maxOpaque, sorted.length); i++) {
         const k = sorted[i][0]
         const rgb = [(k >> 16) & 255, (k >> 8) & 255, k & 255]
         indexOf.set(k, palette.length)
         palette.push(rgb)
       }
+      // Ensure at least 2 entries for a valid GCT size
+      if (palette.length < 2) palette.push([0, 0, 0])
+
+      const colorStart = transparent ? 1 : 0
       const findNearest = (r, g, b) => {
         const k = key((r >> 3) << 3, (g >> 3) << 3, (b >> 3) << 3)
         if (indexOf.has(k)) return indexOf.get(k)
-        let best = 0
+        let best = colorStart
         let bestD = 1e18
-        for (let i = 0; i < palette.length; i++) {
+        for (let i = colorStart; i < palette.length; i++) {
           const p = palette[i]
           const dr = p[0] - r
           const dg = p[1] - g
@@ -163,8 +176,7 @@
         const idx = new Uint8Array(fr.width * fr.height)
         let p = 0
         for (let i = 0; i < d.length; i += 4) {
-          const a = d[i + 3]
-          if (a < 16) idx[p++] = 0
+          if (d[i + 3] < alphaThreshold) idx[p++] = 0
           else idx[p++] = findNearest(d[i], d[i + 1], d[i + 2])
         }
         return idx
@@ -219,8 +231,7 @@
         } else {
           const code = w.length === 1 ? w.charCodeAt(0) : table[w]
           writeCode(code)
-          // Bump code size AFTER writing with the old width. Growing first
-          // misaligned the bitstream (black/static GIFs in viewers).
+          // Bump code size AFTER writing with the old width.
           if (nextCode >= 4096) {
             writeCode(clear)
             reset()
