@@ -184,7 +184,7 @@
       let cur = 0
       let curBits = 0
       const writeCode = (code) => {
-        cur |= code << curBits
+        cur |= (code & 0xffff) << curBits
         curBits += codeSize
         while (curBits >= 8) {
           bitBuf.push(cur & 255)
@@ -192,6 +192,10 @@
           curBits -= 8
         }
       }
+
+      // Byte-as-char keys so palette indices 10–255 stay single symbols
+      // (String(10) has length 2 and used to corrupt the stream → black/static GIFs).
+      const ch = (i) => String.fromCharCode(i & 255)
 
       let table = Object.create(null)
       const reset = () => {
@@ -202,14 +206,19 @@
 
       writeCode(clear)
       reset()
-      let w = String(indexStream[0])
+      if (!indexStream.length) {
+        writeCode(eoi)
+        if (curBits > 0) bitBuf.push(cur & 255)
+        return new Uint8Array(bitBuf)
+      }
+      let w = ch(indexStream[0])
       for (let i = 1; i < indexStream.length; i++) {
-        const k = String(indexStream[i])
-        const wk = w + ',' + k
+        const k = ch(indexStream[i])
+        const wk = w + k
         if (table[wk] != null) {
           w = wk
         } else {
-          const code = w.length === 1 ? +w : table[w]
+          const code = w.length === 1 ? w.charCodeAt(0) : table[w]
           writeCode(code)
           if (nextCode < 4096) {
             table[wk] = nextCode++
@@ -221,7 +230,7 @@
           w = k
         }
       }
-      writeCode(w.length === 1 ? +w : table[w])
+      writeCode(w.length === 1 ? w.charCodeAt(0) : table[w])
       writeCode(eoi)
       if (curBits > 0) bitBuf.push(cur & 255)
       return new Uint8Array(bitBuf)
