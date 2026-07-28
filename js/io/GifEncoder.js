@@ -115,45 +115,50 @@
 
     /**
      * Shared palette. When transparent, index 0 is reserved (never matched for opaque pixels).
+     * Prefers exact RGB (sprites usually fit in 255). Falls back to median-cut if needed.
      * @param {{ width:number, height:number, data:Uint8Array|Uint8ClampedArray }[]} frames
      * @param {boolean} transparent
      * @param {number} alphaThreshold
      */
     static _quantize(frames, transparent, alphaThreshold) {
-      const counts = new Map()
       const key = (r, g, b) => (r << 16) | (g << 8) | b
+      /** @type {Map<number, number>} */
+      const counts = new Map()
       for (const fr of frames) {
         const d = fr.data
         for (let i = 0; i < d.length; i += 4) {
           if (d[i + 3] < alphaThreshold) continue
-          let r = (d[i] >> 3) << 3
-          let g = (d[i + 1] >> 3) << 3
-          let b = (d[i + 2] >> 3) << 3
-          const k = key(r, g, b)
+          const k = key(d[i], d[i + 1], d[i + 2])
           counts.set(k, (counts.get(k) || 0) + 1)
         }
       }
-      const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1])
+
+      const maxOpaque = transparent ? 255 : 256
+      /** @type {number[][]} */
+      let opaqueColors
+      if (counts.size <= maxOpaque) {
+        opaqueColors = [...counts.keys()].map((k) => [
+          (k >> 16) & 255,
+          (k >> 8) & 255,
+          k & 255,
+        ])
+      } else {
+        opaqueColors = GifEncoder._medianCut(counts, maxOpaque)
+      }
+
       /** @type {number[][]} */
       const palette = []
       const indexOf = new Map()
-      if (transparent) {
-        // Slot 0 = transparent key color (not shown when GCE flag is set)
-        palette.push([0, 0, 0])
-      }
-      const maxOpaque = transparent ? 255 : 256
-      for (let i = 0; i < Math.min(maxOpaque, sorted.length); i++) {
-        const k = sorted[i][0]
-        const rgb = [(k >> 16) & 255, (k >> 8) & 255, k & 255]
-        indexOf.set(k, palette.length)
+      if (transparent) palette.push([0, 0, 0])
+      for (const rgb of opaqueColors) {
+        indexOf.set(key(rgb[0], rgb[1], rgb[2]), palette.length)
         palette.push(rgb)
       }
-      // Ensure at least 2 entries for a valid GCT size
       if (palette.length < 2) palette.push([0, 0, 0])
 
       const colorStart = transparent ? 1 : 0
       const findNearest = (r, g, b) => {
-        const k = key((r >> 3) << 3, (g >> 3) << 3, (b >> 3) << 3)
+        const k = key(r, g, b)
         if (indexOf.has(k)) return indexOf.get(k)
         let best = colorStart
         let bestD = 1e18
@@ -182,6 +187,106 @@
         return idx
       })
       return { palette, indexFrames }
+    }
+
+    /**
+     * Median-cut palette reduction for >255 unique opaque colors.
+     * @param {Map<number, number>} counts key→pixel count
+     * @param {number} maxColors
+     * @returns {number[][]}
+     */
+    static _medianCut(counts, maxColors) {
+      /** @type {{ r:number, g:number, b:number, n:number }[]} */
+      const points = []
+      for (const [k, n] of counts) {
+        points.push({
+          r: (k >> 16) & 255,
+          g: (k >> 8) & 255,
+          b: k & 255,
+          n,
+        })
+      }
+
+      /** @type {{ r:number, g:number, b:number, n:number }[][]} */
+      let boxes = [points]
+      while (boxes.length < maxColors) {
+        let bi = -1
+        let bestRange = -1
+        for (let i = 0; i < boxes.length; i++) {
+          const box = boxes[i]
+          if (box.length < 2) continue
+          let minR = 255
+          let maxR = 0
+          let minG = 255
+          let maxG = 0
+          let minB = 255
+          let maxB = 0
+          for (const p of box) {
+            if (p.r < minR) minR = p.r
+            if (p.r > maxR) maxR = p.r
+            if (p.g < minG) minG = p.g
+            if (p.g > maxG) maxG = p.g
+            if (p.b < minB) minB = p.b
+            if (p.b > maxB) maxB = p.b
+          }
+          const range = Math.max(maxR - minR, maxG - minG, maxB - minB)
+          if (range > bestRange) {
+            bestRange = range
+            bi = i
+          }
+        }
+        if (bi < 0 || bestRange <= 0) break
+        const box = boxes[bi]
+        let minR = 255
+        let maxR = 0
+        let minG = 255
+        let maxG = 0
+        let minB = 255
+        let maxB = 0
+        for (const p of box) {
+          if (p.r < minR) minR = p.r
+          if (p.r > maxR) maxR = p.r
+          if (p.g < minG) minG = p.g
+          if (p.g > maxG) maxG = p.g
+          if (p.b < minB) minB = p.b
+          if (p.b > maxB) maxB = p.b
+        }
+        const rangeR = maxR - minR
+        const rangeG = maxG - minG
+        const rangeB = maxB - minB
+        const channel =
+          rangeR >= rangeG && rangeR >= rangeB ? 'r' : rangeG >= rangeB ? 'g' : 'b'
+        box.sort((a, b) => a[channel] - b[channel])
+        let total = 0
+        for (const p of box) total += p.n
+        let acc = 0
+        let split = Math.floor(box.length / 2)
+        for (let i = 0; i < box.length; i++) {
+          acc += box[i].n
+          if (acc >= total / 2) {
+            split = Math.max(1, Math.min(box.length - 1, i + 1))
+            break
+          }
+        }
+        const left = box.slice(0, split)
+        const right = box.slice(split)
+        boxes.splice(bi, 1, left, right)
+      }
+
+      return boxes.map((box) => {
+        let r = 0
+        let g = 0
+        let b = 0
+        let n = 0
+        for (const p of box) {
+          r += p.r * p.n
+          g += p.g * p.n
+          b += p.b * p.n
+          n += p.n
+        }
+        if (!n) return [0, 0, 0]
+        return [Math.round(r / n), Math.round(g / n), Math.round(b / n)]
+      })
     }
 
     /** @param {Uint8Array} indexStream @param {number} minCodeSize */
