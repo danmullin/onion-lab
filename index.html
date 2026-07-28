@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Onion Lab</title>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40" width="40" height="40">
+          <defs>
+            <linearGradient id="onionSkin" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#f0c878"/>
+              <stop offset="55%" stop-color="#d9894a"/>
+              <stop offset="100%" stop-color="#9a5a32"/>
+            </linearGradient>
+            <radialGradient id="onionAura" cx="50%" cy="40%" r="55%">
+              <stop offset="0%" stop-color="#ffe0a8" stop-opacity="0.45"/>
+              <stop offset="100%" stop-color="#7eb8ff" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <circle cx="20" cy="20" r="19" fill="url(#onionAura)"/>
+          <!-- Onion layers — onion-skin nod -->
+          <ellipse cx="20" cy="22" rx="11" ry="13" fill="url(#onionSkin)"/>
+          <ellipse cx="20" cy="22" rx="7.5" ry="9.5" fill="none" stroke="#f7e6c4" stroke-width="1.2" opacity="0.55"/>
+          <ellipse cx="20" cy="22" rx="4" ry="5.5" fill="none" stroke="#ffe8c0" stroke-width="1.1" opacity="0.7"/>
+          <path fill="#6b9e4a" d="M18 8c1-3 3-4 4-1 1 2-1 4-2 5-1-1-2-2-2-4z"/>
+        </svg>
+      </div>
+      <div>
+        <h1>Onion <span class="brand-sub">Lab</span></h1>
+        <div class="meta">spritesheet animation studio · shared pool · free anim tabs</div>
+      </div>
+    </div>
+    <div class="row gap">
+      <label>Export
+        <select id="exportProfile">
+          <option value="generic" selected>Generic</option>
+          <option value="godot">Godot 4</option>
+        </select>
+      </label>
+      <label>Asset id <input class="wide" id="charId" type="text" value="" placeholder="my-asset" spellcheck="false"></label>
+      <button type="button" id="btnUndo" title="Undo (Z)">Undo</button>
+      <button type="button" id="btnRedo" title="Redo (R)">Redo</button>
+      <button type="button" id="btnSaveSession">Save session</button>
+      <button type="button" id="btnLoadSession">Load session</button>
+      <button type="button" id="btnImport">Import JSON…</button>
+      <button type="button" class="primary" id="btnExport">Copy export</button>
+      <button type="button" id="btnDownload">Download JSON</button>
+      <button type="button" id="btnDownloadPack">Download PNG pack</button>
+      <button type="button" id="btnDownloadGif" title="Export active anim as animated GIF">Download GIF</button>
+    </div>
+  </header>
+
+  <div class="tabs" id="animTabs"></div>
+
+  <div class="main">
+    <div class="workspace">
+      <div class="sheet-bar">
+        <div class="drop-zone" id="dropZone">Drop master sheet PNG here or click to load</div>
+        <input type="file" id="fileInput" accept="image/png,image/*,.png,.jpg,.jpeg,.webp">
+        <label>Sheet name <input class="wide" id="sheetName" type="text" spellcheck="false" placeholder="sheet.png"></label>
+        <label>FPS <input id="animFps" type="number" min="1" max="60" value="6"></label>
+        <label><input id="animLoop" type="checkbox" checked> loop</label>
+        <label title="Playback direction for this anim">Dir
+          <select id="animDirection">
+            <option value="forward">forward</option>
+            <option value="reverse">reverse</option>
+            <option value="pingpong">ping-pong</option>
+          </select>
+        </label>
+        <button type="button" id="btnApplyFps" title="Clear per-frame holds and use anim FPS for every slot">Apply FPS → all</button>
+        <button type="button" id="btnDetect">Re-detect</button>
+        <span class="zoom-controls" title="Ctrl+scroll to zoom toward cursor">
+          <button type="button" id="btnZoomOut" title="Zoom out">−</button>
+          <button type="button" id="btnZoomLabel" title="Reset to 100%">100%</button>
+          <button type="button" id="btnZoomIn" title="Zoom in">+</button>
+          <button type="button" id="btnZoomFit" title="Fit sheet in view">Fit</button>
+        </span>
+        <span class="hint" id="detectStatus">No sheet loaded</span>
+      </div>
+
+      <div class="sheet-row" id="sheetRow" style="--preview-pane-w: 340px">
+        <div class="sheet-stage" id="sheetStage">
+          <canvas id="sheetCanvas"></canvas>
+        </div>
+
+        <div
+          class="sheet-split"
+          id="sheetSplit"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sheet and preview"
+          title="Drag to resize · double-click to reset"
+        ></div>
+
+        <div class="preview-dock card" id="previewDock">
+          <h2>Preview</h2>
+          <div class="preview-body">
+            <div class="preview-stage" id="previewStage" title="Ctrl+scroll to zoom · Space+drag to pan">
+              <canvas id="previewCanvas" width="360" height="420"></canvas>
+            </div>
+            <div class="preview-side" id="previewSide">
+              <div class="preview-dock-controls">
+                <button type="button" id="btnPrevFrame" title="Previous playback frame">◀</button>
+                <button type="button" class="primary" id="btnPlay">Play</button>
+                <button type="button" id="btnNextFrame" title="Next playback frame">▶</button>
+                <button type="button" id="btnStop">Stop</button>
+                <button type="button" id="btnPopout" title="Open 1:1 pixel preview (full sprite size)">Pop out 1:1</button>
+                <span class="zoom-controls" title="Ctrl+scroll over preview to zoom">
+                  <button type="button" id="btnPreviewZoomOut" title="Zoom out">−</button>
+                  <button type="button" id="btnPreviewZoomLabel" title="Reset to 100%">100%</button>
+                  <button type="button" id="btnPreviewZoomIn" title="Zoom in">+</button>
+                </span>
+              </div>
+              <div class="preview-dock-controls">
+                <label title="Optional scenic backdrop behind the sprite">BG
+                  <select id="previewBg">
+                    <option value="">None</option>
+                    <option value="plains">Plains</option>
+                    <option value="forest">Forest</option>
+                    <option value="desert">Desert</option>
+                  </select>
+                </label>
+                <label title="Show prev (green) / next (blue) as silhouettes + outlines to spot alignment drift"><input id="previewOnion" type="checkbox"> onion</label>
+                <label title="Mirror preview only"><input id="previewFlipX" type="checkbox"> flipX</label>
+              </div>
+              <div class="preview-dock-status">
+                <span class="hint preview-frame" id="previewFrame">frame —</span>
+                <label class="tl-dur-label" title="Hold time for selected timeline slot (blank = use anim FPS)">ms
+                  <input id="tlDurationMs" type="number" min="16" max="10000" step="1" placeholder="auto" style="width:64px">
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="timeline-wrap">
+        <div class="row" style="justify-content:space-between;margin-bottom:4px">
+          <h2>Timeline (playback order)</h2>
+          <div class="row">
+            <button type="button" id="btnUndo2" title="Undo (Z)">Undo</button>
+            <button type="button" id="btnRedo2" title="Redo (R)">Redo</button>
+            <button type="button" id="btnAddAll">Add all →</button>
+            <button type="button" id="btnAppendReverse" title="Append timeline in reverse (skip last) for a ping-pong finish">Append ↔ reverse</button>
+            <button type="button" id="btnClearTl">Clear</button>
+            <button type="button" id="btnDup" title="Duplicate selected timeline slot (same pool box again)">Duplicate</button>
+            <button type="button" class="danger" id="btnDel">Delete</button>
+          </div>
+        </div>
+        <div class="timeline" id="timeline"></div>
+      </div>
+    </div>
+
+    <aside class="side">
+      <div class="card">
+        <h2>Chroma / detect</h2>
+        <label><input id="hideChroma" type="checkbox"> <span id="hideChromaLabel">Hide chroma on sheet &amp; preview</span></label>
+        <p class="hint" id="alphaSheetNote" hidden style="margin:0">Native alpha — chroma off. Merge/Bridge = 0 so transparent gutters split sprites.</p>
+        <div class="chroma-row">
+          <label>Key
+            <input type="color" id="chromaColor" value="#f004da" title="Chroma key color">
+          </label>
+          <button type="button" id="btnPickChroma" title="Click the sheet to sample background color">Pick from sheet</button>
+        </div>
+        <div class="nudge">
+          <label>R <input id="chromaR" type="number" min="0" max="255" value="240"></label>
+          <label>G <input id="chromaG" type="number" min="0" max="255" value="4"></label>
+          <label>B <input id="chromaB" type="number" min="0" max="255" value="218"></label>
+          <label>Tol <input id="chromaTol" type="number" min="0" max="400" value="140"></label>
+          <label>Min W <input id="minW" type="number" min="1" max="500" value="16"></label>
+          <label>Min H <input id="minH" type="number" min="1" max="500" value="16"></label>
+          <label title="AABB merge distance between peer islands">Merge <input id="mergeGap" type="number" min="0" max="80" value="8"></label>
+          <label title="Morphological close radius — reconnects thin chroma-eaten weapon handles">Bridge <input id="bridge" type="number" min="0" max="8" value="2"></label>
+          <label>Pad <input id="boxPad" type="number" min="0" max="20" value="0"></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Selected detect box</h2>
+        <div class="nudge" id="boxNudge">
+          <label>x <input id="boxX" type="number"></label>
+          <label>y <input id="boxY" type="number"></label>
+          <label>w <input id="boxW" type="number" min="1"></label>
+          <label>h <input id="boxH" type="number" min="1"></label>
+          <label title="Character center X (0 = left, 50 = center, 100 = right)">anchor X%
+            <input id="boxAnchorX" type="number" min="0" max="100" step="1" value="50">
+          </label>
+          <label title="Character center Y (0 = top, 100 = bottom / feet)">anchor Y%
+            <input id="boxAnchorY" type="number" min="0" max="100" step="1" value="100">
+          </label>
+          <button type="button" id="btnResetAnchor" title="Reset to bottom-center (50%, 100%)">Center feet</button>
+          <button type="button" id="btnSnapAnchorBottom" title="Snap Y to bottom edge">Snap bottom</button>
+        </div>
+        <button type="button" class="primary" id="btnAddSelected">Add selected → timeline</button>
+        <div class="row" style="margin-top:4px">
+          <button type="button" id="btnAddPoint" title="Alt+click edge to insert">Add point</button>
+          <button type="button" id="btnResetShape" title="Reset polygon to rectangle">Reset shape</button>
+          <button type="button" class="primary" id="btnSnapDetect" title="Snap selected box to nearest chroma object (S)">Snap to nearest</button>
+          <button type="button" id="btnDupDetect" title="Clone selected box to the right">Duplicate →</button>
+          <button type="button" id="btnSplitDetect" title="Split selected box into left + right halves">Split ↔</button>
+          <button type="button" id="btnNewDetect" title="Add a blank detect box">New box</button>
+          <button type="button" class="danger" id="btnDelDetect">Delete selected</button>
+        </div>
+        <p class="hint" id="vertexStatus" style="margin:4px 0 0"></p>
+        <p class="hint" style="margin:4px 0 0">Boxes live in one shared pool. <b>Empty-drag</b> selects enclosed boxes · <b>Ctrl/Cmd+click</b> toggles · <b>Delete</b> removes all selected. Cyan diamond = <b>character anchor</b> — <b>Alt+drag</b> (snaps to bottom when close); <b>Alt+Shift+drag</b> unlocks. Without Alt, bottom-middle gold handle resizes. <b>Alt+click</b> edge to add a vertex · <b>S</b> snap · <b>Enter</b> add to timeline · <b>Shift+drag</b> draw new box.</p>
+      </div>
+
+      <div class="card">
+        <h2>Export</h2>
+        <textarea id="exportBox" readonly spellcheck="false"></textarea>
+      </div>
+    </aside>
+  </div>
+
+  <footer>
+    <span class="footer-help">Z undo · R redo · Space+drag pan · empty-drag select · Ctrl+click toggle · Ctrl+scroll zoom · P play · Alt+click vertex · Delete multi</span>
+    <span id="footerStatus" class="footer-status"></span>
+    <span class="footer-brand">Onion Lab</span>
+  </footer>
+</div>
+
+<div id="previewPopout" class="preview-popout" hidden>
+  <div class="preview-popout-panel">
+    <div class="preview-popout-bar">
+      <strong>1:1 Preview</strong>
+      <span class="hint preview-frame" id="popoutFrame">frame —</span>
+      <div class="row" style="margin-left:auto">
+        <button type="button" id="btnPopoutPrev" title="Previous frame">◀</button>
+        <button type="button" class="primary" id="btnPopoutPlay">Play</button>
+        <button type="button" id="btnPopoutNext" title="Next frame">▶</button>
+        <button type="button" id="btnPopoutStop">Stop</button>
+        <label title="Playback speed for this anim">FPS
+          <input id="popoutFps" type="number" min="1" max="60" value="6">
+        </label>
+        <button type="button" id="btnPopoutClose">Close</button>
+      </div>
+    </div>
+    <div class="preview-popout-stage" id="previewPopoutStage">
+      <canvas id="previewPopoutCanvas" width="64" height="64"></canvas>
+    </div>
+  </div>
+</div>
+<script src="js/ns.js"></script>
+<script src="js/domain/Polygon.js"></script>
+<script src="js/domain/DetectBox.js"></script>
+<script src="js/domain/TimelineFrame.js"></script>
+<script src="js/domain/HistoryStack.js"></script>
+<script src="js/domain/ChromaKey.js"></script>
+<script src="js/domain/FrameDetector.js"></script>
+<script src="js/domain/AnimSlot.js"></script>
+<script src="js/domain/CharacterSession.js"></script>
+<script src="js/io/ExportProfiles.js"></script>
+<script src="js/io/SessionStore.js"></script>
+<script src="js/io/FrameBaker.js"></script>
+<script src="js/io/GifEncoder.js"></script>
+<script src="js/io/PackExporter.js"></script>
+<script src="js/io/GodotPackExporter.js"></script>
+<script src="js/ui/Dom.js"></script>
+<script src="js/ui/Bindings.js"></script>
+<script src="js/render/SheetView.js"></script>
+<script src="js/render/TimelineView.js"></script>
+<script src="js/render/PreviewPlayer.js"></script>
+<script src="js/app/AnimStudioApp.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
