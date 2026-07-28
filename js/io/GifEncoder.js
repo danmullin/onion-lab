@@ -178,7 +178,6 @@
       const eoi = clear + 1
       let codeSize = minCodeSize + 1
       let nextCode = eoi + 1
-      const maxCode = () => 1 << codeSize
 
       const bitBuf = []
       let cur = 0
@@ -193,8 +192,7 @@
         }
       }
 
-      // Byte-as-char keys so palette indices 10–255 stay single symbols
-      // (String(10) has length 2 and used to corrupt the stream → black/static GIFs).
+      // Byte-as-char keys so palette indices 10–255 stay single symbols.
       const ch = (i) => String.fromCharCode(i & 255)
 
       let table = Object.create(null)
@@ -211,6 +209,7 @@
         if (curBits > 0) bitBuf.push(cur & 255)
         return new Uint8Array(bitBuf)
       }
+
       let w = ch(indexStream[0])
       for (let i = 1; i < indexStream.length; i++) {
         const k = ch(indexStream[i])
@@ -220,12 +219,14 @@
         } else {
           const code = w.length === 1 ? w.charCodeAt(0) : table[w]
           writeCode(code)
-          if (nextCode < 4096) {
-            table[wk] = nextCode++
-            if (nextCode === maxCode() && codeSize < 12) codeSize++
-          } else {
+          // Bump code size AFTER writing with the old width. Growing first
+          // misaligned the bitstream (black/static GIFs in viewers).
+          if (nextCode >= 4096) {
             writeCode(clear)
             reset()
+          } else {
+            if (nextCode > (1 << codeSize) - 1 && codeSize < 12) codeSize++
+            table[wk] = nextCode++
           }
           w = k
         }
